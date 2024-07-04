@@ -10,13 +10,23 @@ model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_l
 intents = {
     0: "greet",
     1: "ask_medication",
-    2: "schedule_appointment"
+   
+    2: "diagnose_symptoms"
 }
 
 responses = {
     "greet": "Hello! How can I assist you today?",
     "ask_medication": "Please provide the name of the medication.",
-    "schedule_appointment": "Sure, I can help you with scheduling an appointment. Please provide the date and time."
+ 
+    "diagnose_symptoms": "Please describe your symptoms in detail."
+}
+
+# Define simple symptom-to-condition mappings
+symptom_conditions = {
+    "fever": ["Common Cold", "Flu", "COVID-19"],
+    "cough": ["Common Cold", "Flu", "COVID-19", "Bronchitis"],
+    "headache": ["Migraine", "Tension Headache", "Cluster Headache"],
+    "sore throat": ["Common Cold", "Flu", "Strep Throat"]
 }
 
 # Function to classify intent
@@ -28,8 +38,19 @@ def classify_intent(text):
     return intents[predicted_class_id]
 
 # Function to generate response
-def generate_response(intent):
+def generate_response(intent, user_input=None):
+    if intent == "diagnose_symptoms" and user_input:
+        conditions = diagnose_symptoms(user_input)
+        return f"Based on your symptoms, you might have: {', '.join(conditions)}."
     return responses[intent]
+
+# Function to diagnose symptoms
+def diagnose_symptoms(symptoms):
+    conditions = set()
+    for symptom in symptoms.split():
+        if symptom in symptom_conditions:
+            conditions.update(symptom_conditions[symptom])
+    return conditions if conditions else ["No matching conditions found"]
 
 # Create Flask app
 app = Flask(__name__)
@@ -42,7 +63,7 @@ def home():
 def chat():
     user_input = request.json['message']
     intent = classify_intent(user_input)
-    response = generate_response(intent)
+    response = generate_response(intent, user_input)
     return jsonify({"response": response})
 
 if __name__ == '__main__':
