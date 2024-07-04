@@ -1,38 +1,38 @@
+import os
 import torch
-from transformers import BertTokenizer, BertForSequenceClassification
+import transformers
+from transformers import BertTokenizer, BertForSequenceClassification,AutoTokenizer
 from flask import Flask, request, jsonify, render_template
-import logging
-from functools import lru_cache
-import re
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+from keras.models import load_model
+import pickle
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+import pandas as pd
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 # Load pre-trained model and tokenizer
-@lru_cache(maxsize=None)
-def load_model():
-    try:
-        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-        model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=3)
-        return tokenizer, model
-    except Exception as e:
-        logger.error(f"Error loading model: {str(e)}")
-        raise
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=2)  # Adjust num_labels as needed
+model2=load_model('symptoms.h5',custom_objects={"TFBertModel": transformers.TFBertModel})
 
-tokenizer, model = load_model()
+df=pd.read_csv('Symptom2Disease.csv')
 
+
+le=LabelEncoder()
+
+df['disease']=le.fit_transform(df['label'])
 # Define intents and responses
 intents = {
     0: "greet",
-    1: "ask_medication",
-
-    2: "diagnose_symptoms"
+   
+   
+    1: "diagnose_symptoms"
 }
 
 responses = {
     "greet": "Hello! How can I assist you today?",
-    "ask_medication": "Please provide the name of the medication.",
+  
  
     "diagnose_symptoms": "Please describe your symptoms in detail."
 }
@@ -44,49 +44,44 @@ symptom_conditions = {
     "headache": ["Migraine", "Tension Headache", "Cluster Headache"],
     "sore throat": ["Common Cold", "Flu", "Strep Throat"]
 }
-def is_greeting(text):
-    greetings = ["hello", "hi", "hey", "greetings", "good morning", "good afternoon", "good evening"]
-    return any(greeting in text.lower() for greeting in greetings)
 
 # Function to classify intent
 def classify_intent(text):
-    try:
-        # First, check if it's a greeting
-        if is_greeting(text):
-            return "greet"
-
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-        with torch.no_grad():
-            outputs = model(**inputs)
-        logits = outputs.logits
-        probabilities = torch.nn.functional.softmax(logits, dim=1)
-        predicted_class_id = torch.argmax(logits, dim=1).item()
-        confidence = probabilities[0][predicted_class_id].item()
-        
-        if confidence < 0.5:  # Adjust this threshold as needed
-            return "unknown"
-        return intents[predicted_class_id]
-    except Exception as e:
-        logger.error(f"Error in intent classification: {str(e)}")
-        return "unknown"
-
+    inputs = tokenizer(text, return_tensors="pt")
+    outputs = model(**inputs)
+    logits = outputs.logits
+    predicted_class_id = torch.argmax(logits, dim=1).item()
+    return intents[predicted_class_id]
 
 # Function to generate response
 def generate_response(intent, user_input=None):
-    if intent == "diagnose_symptoms" and user_input:
+    if  user_input:
         conditions = diagnose_symptoms(user_input)
-        return f"Based on your symptoms, you might have: {', '.join(conditions)}. Please consult a healthcare professional for accurate diagnosis."
-    elif intent == "unknown":
-        return "I'm not sure I understand. Could you please rephrase your question?"
-    return responses.get(intent, "I'm sorry, I don't have a response for that.")
+        return f"Based on your symptoms, you might have: {', '.join(conditions)}."
+    return responses[intent]
 
 # Function to diagnose symptoms
 def diagnose_symptoms(symptoms):
     conditions = set()
-    for symptom in re.findall(r'\b\w+\b', symptoms.lower()):
-        if symptom in symptom_conditions:
-            conditions.update(symptom_conditions[symptom])
-    return list(conditions) if conditions else ["No matching conditions found"]
+    test1=tokenizer(
+    text=symptoms,
+    add_special_tokens=True,
+    max_length=55,
+    truncation=True,
+    padding='max_length',
+    return_tensors='tf',
+    return_token_type_ids=False,
+    return_attention_mask=True,
+    verbose=True
+    )
+    predictions=model2.predict({'input_ids': test1['input_ids'], 'attention_mask':               test1['attention_mask']})
+    predicted_class=np.argmax(predictions)
+    predicted_class2=le.inverse_transform([predicted_class])
+
+    
+    conditions.update(predicted_class2)
+    return conditions if conditions else ["No matching conditions found"]
+
 # Create Flask app
 app = Flask(__name__)
 
